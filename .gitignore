@@ -1,0 +1,38 @@
+# Ignore Python bytecode
+__pycache__/
+*.pyc
+
+# Ignore node modules
+node_modules/
+
+# Ignore environment files
+.env
+
+# Ignore Docker artifacts
+*.log
+*.pid
+*.db
+docker-compose.override.yml
+
+# Ignore OS generated files
+.DS_Store
+Thumbs.db
+
+# Ignore build directories
+dist/
+build/
+out/
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+
+# Ignore coverage reports
+coverage/
+*.cover
+*.coverage
+
+# Ignore test output
+test-results/
+.data/

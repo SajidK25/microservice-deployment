@@ -1,0 +1,496 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+  namespace: microservices
+data:
+  loki-config.yaml: |
+    server:
+      http_listen_address: 0.0.0.0
+      http_listen_port: 3100
+    memberlist:
+      join_members: ["read", "write", "backend"]
+      dead_node_reclaim_time: 30s
+      gossip_to_dead_nodes_time: 15s
+      left_ingesters_timeout: 30s
+      bind_addr: ['0.0.0.0']
+      bind_port: 7946
+      gossip_interval: 2s
+    schema_config:
+      configs:
+        - from: 2023-01-01
+          store: tsdb
+          object_store: s3
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+    common:
+      path_prefix: /loki
+      replication_factor: 1
+      compactor_address: http://backend:3100
+      storage:
+        s3:
+          endpoint: minio:9000
+          insecure: true
+          bucketnames: loki-data
+          access_key_id: loki
+          secret_access_key: supersecret
+          s3forcepathstyle: true
+      ring:
+        kvstore:
+          store: memberlist
+    ruler:
+      storage:
+        s3:
+          bucketnames: loki-ruler
+    compactor:
+      working_directory: /tmp/compactor
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: microservices
+data:
+  alloy-local-config.yaml: |
+    discovery.kubernetes "pod_logs" {
+      role = "pod"
+      namespaces {
+        names = ["microservices"]
+      }
+    }
+    discovery.relabel "pod_logs" {
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+    }
+    loki.source.kubernetes "pod_logs" {
+      targets    = discovery.kubernetes.pod_logs.targets
+      forward_to = [loki.write.default.receiver]
+      relabel_rules = discovery.relabel.pod_logs.rules
+    }
+    loki.write "default" {
+      endpoint {
+        url       = "http://loki-gateway:3100/loki/api/v1/push"
+        tenant_id = "tenant1"
+      }
+      external_labels = {}
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: read
+  namespace: microservices
+  labels:
+    app: read
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: read
+  template:
+    metadata:
+      labels:
+        app: read
+    spec:
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: read
+        image: grafana/loki:latest
+        resources:
+          limits:
+            memory: "500Mi"
+            cpu: "500m"
+          requests:
+            memory: "300Mi"
+            cpu: "100m"
+        command:
+        - loki
+        - -config.file=/etc/loki/config.yaml
+        - -target=read
+        volumeMounts:
+        - name: loki-config
+          mountPath: /etc/loki
+        ports:
+        - containerPort: 3100
+        - containerPort: 7946
+        - containerPort: 9095
+        livenessProbe:
+          httpGet:
+            path: /ready
+            port: 3100
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3100
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: loki-config
+        configMap:
+          name: loki-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: read
+  namespace: microservices
+spec:
+  selector:
+    app: read
+  ports:
+  - protocol: TCP
+    port: 3100
+    targetPort: 3100
+  - protocol: TCP
+    port: 7946
+    targetPort: 7946
+  - protocol: TCP
+    port: 9095
+    targetPort: 9095
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: write
+  namespace: microservices
+  labels:
+    app: write
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: write
+  template:
+    metadata:
+      labels:
+        app: write
+    spec:
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: write
+        image: grafana/loki:latest
+        resources:
+          limits:
+            memory: "500Mi"
+            cpu: "500m"
+          requests:
+            memory: "300Mi"
+            cpu: "100m"
+        command:
+        - loki
+        - -config.file=/etc/loki/config.yaml
+        - -target=write
+        volumeMounts:
+        - name: loki-config
+          mountPath: /etc/loki
+        ports:
+        - containerPort: 3100
+        - containerPort: 7946
+        - containerPort: 9095
+        livenessProbe:
+          httpGet:
+            path: /ready
+            port: 3100
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3100
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: loki-config
+        configMap:
+          name: loki-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: write
+  namespace: microservices
+spec:
+  selector:
+    app: write
+  ports:
+  - protocol: TCP
+    port: 3100
+    targetPort: 3100
+  - protocol: TCP
+    port: 7946
+    targetPort: 7946
+  - protocol: TCP
+    port: 9095
+    targetPort: 9095
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: microservices
+  labels:
+    app: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: backend
+        image: grafana/loki:latest
+        resources:
+          limits:
+            memory: "500Mi"
+            cpu: "500m"
+          requests:
+            memory: "300Mi"
+            cpu: "100m"
+        command:
+        - loki
+        - -config.file=/etc/loki/config.yaml
+        - -target=backend
+        - -legacy-read-mode=false
+        volumeMounts:
+        - name: loki-config
+          mountPath: /etc/loki
+        ports:
+        - containerPort: 3100
+        - containerPort: 7946
+        livenessProbe:
+          httpGet:
+            path: /ready
+            port: 3100
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3100
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: loki-config
+        configMap:
+          name: loki-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: microservices
+spec:
+  selector:
+    app: backend
+  ports:
+  - protocol: TCP
+    port: 3100
+    targetPort: 3100
+  - protocol: TCP
+    port: 7946
+    targetPort: 7946
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki-gateway
+  namespace: microservices
+  labels:
+    app: loki-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loki-gateway
+  template:
+    metadata:
+      labels:
+        app: loki-gateway
+    spec:
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: loki-gateway
+        image: nginx:latest
+        resources:
+          limits:
+            memory: "500Mi"
+            cpu: "500m"
+          requests:
+            memory: "300Mi"
+            cpu: "100m"
+        ports:
+        - containerPort: 3100
+        command:
+        - sh
+        - -euc
+        - |
+          cat <<EOF > /etc/nginx/nginx.conf
+          user  nginx;
+          worker_processes  5;
+          events {
+            worker_connections   1000;
+          }
+          http {
+            resolver 127.0.0.11;
+            server {
+              listen             3100;
+              location = / {
+                return 200 'OK';
+                auth_basic off;
+              }
+              location = /api/prom/push {
+                proxy_pass       http://write:3100$request_uri;
+              }
+              location = /api/prom/tail {
+                proxy_pass       http://read:3100$request_uri;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+              }
+              location ~ /api/prom/.* {
+                proxy_pass       http://read:3100$request_uri;
+              }
+              location = /loki/api/v1/push {
+                proxy_pass       http://write:3100$request_uri;
+              }
+              location = /loki/api/v1/tail {
+                proxy_pass       http://read:3100$request_uri;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+              }
+              location ~ /loki/api/.* {
+                proxy_pass       http://read:3100$request_uri;
+              }
+            }
+          }
+          EOF
+          /docker-entrypoint.sh nginx -g "daemon off;"
+        livenessProbe:
+          exec:
+            command: ["service", "nginx", "status"]
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3100
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki-gateway
+  namespace: microservices
+spec:
+  selector:
+    app: loki-gateway
+  ports:
+  - protocol: TCP
+    port: 3100
+    targetPort: 3100
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alloy
+  namespace: microservices
+  labels:
+    app: alloy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alloy
+  template:
+    metadata:
+      labels:
+        app: alloy
+    spec:
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: alloy
+        image: grafana/alloy:latest
+        resources:
+          limits:
+            memory: "500Mi"
+            cpu: "500m"
+          requests:
+            memory: "300Mi"
+            cpu: "100m"
+        command:
+        - run
+        - --server.http.listen-addr=0.0.0.0:12345
+        - --storage.path=/var/lib/alloy/data
+        - /etc/alloy/config.alloy
+        volumeMounts:
+        - name: alloy-config
+          mountPath: /etc/alloy
+          readOnly: true
+        - name: logs-parent
+          mountPath: /logs-parent
+          readOnly: true
+        ports:
+        - containerPort: 12345
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 12345
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 12345
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: alloy-config
+        configMap:
+          name: alloy-config
+      - name: logs-parent
+        hostPath:
+          path: /path/to/logs
