@@ -48,6 +48,7 @@ metadata:
   labels:
     app: prometheus
 spec:
+  serviceAccountName: microservices-sa
   replicas: 1
   selector:
     matchLabels:

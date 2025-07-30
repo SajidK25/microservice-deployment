@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: order-service
+  name: gateway-service
   namespace: microservices
   labels:
-    app: order-service
+    app: gateway-service
 spec:
   serviceAccountName: microservices-sa
   replicas: 1
   selector:
     matchLabels:
-      app: order-service
+      app: gateway-service
   template:
     metadata:
       labels:
-        app: order-service
+        app: gateway-service
     spec:
       tolerations:
       - key: "node-role.kubernetes.io/control-plane"
@@ -22,9 +22,25 @@ spec:
         effect: "NoSchedule"
       securityContext:
         runAsNonRoot: true
+      initContainers:
+      - name: wait-for-mongo
+        image: busybox:1.36
+        command: ["sh", "-c", "until nc -z mongo.microservices 27017; do echo waiting for mongo; sleep 2; done;"]
+      - name: wait-for-rabbitmq
+        image: busybox:1.36
+        command: ["sh", "-c", "until nc -z rabbitmq.microservices 5672; do echo waiting for rabbitmq; sleep 2; done;"]
+      - name: wait-for-eureka-server
+        image: busybox:1.36
+        command: ["sh", "-c", "until nc -z eureka-server.microservices 8761; do echo waiting for eureka-server; sleep 2; done;"]
+      - name: wait-for-keycloak
+        image: busybox:1.36
+        command: ["sh", "-c", "until nc -z keycloak.microservices 8080; do echo waiting for keycloak; sleep 2; done;"]
+      - name: wait-for-config-server
+        image: busybox:1.36
+        command: ["sh", "-c", "until nc -z config-server.microservices 8888; do echo waiting for config-server; sleep 2; done;"]
       containers:
-      - name: order-service
-        image: bluewhale007/order:latest
+      - name: gateway-service
+        image: bluewhale007/gateway:latest
         resources:
           limits:
             memory: "500Mi"
@@ -35,21 +51,8 @@ spec:
         env:
         - name: SPRING_PROFILES_ACTIVE
           value: "docker"
-        - name: DB_URL
-          valueFrom:
-            secretKeyRef:
-              name: microservices-secrets
-              key: db-url
-        - name: DB_USER
-          valueFrom:
-            secretKeyRef:
-              name: microservices-secrets
-              key: db-user
-        - name: DB_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: microservices-secrets
-              key: db-password
+        - name: ZIPKIN_URL
+          value: "http://zipkin:9411/api/v2/spans"
         - name: RABBITMQ_HOST
           valueFrom:
             secretKeyRef:
@@ -72,33 +75,38 @@ spec:
             secretKeyRef:
               name: microservices-secrets
               key: rabbitmq-vhost
-        - name: ZIPKIN_URL
-          value: "http://zipkin:9411/api/v2/spans"
+        volumeMounts:
+        - name: log-volume
+          mountPath: /logs
         ports:
-        - containerPort: 8083
+        - containerPort: 8080
         livenessProbe:
           httpGet:
             path: /actuator/health
-            port: 8083
+            port: 8080
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /actuator/health
-            port: 8083
+            port: 8080
           initialDelaySeconds: 10
           periodSeconds: 5
+      volumes:
+      - name: log-volume
+        hostPath:
+          path: /mnt/data/logs
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: order-service
+  name: gateway-service
   namespace: microservices
 spec:
   selector:
-    app: order-service
+    app: gateway-service
   ports:
   - protocol: TCP
-    port: 8083
-    targetPort: 8083
+    port: 8080
+    targetPort: 8080
   type: ClusterIP
