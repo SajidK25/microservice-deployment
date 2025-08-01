@@ -43,6 +43,13 @@ spec:
         cidr: 0.0.0.0/0
     ports:
     - protocol: TCP
-      port: 5672 # External RabbitMQ
+      port: 5672
     - protocol: TCP
-      port: 5432 # External PostgreSQL
+      port: 5432
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 443
