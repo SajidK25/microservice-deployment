@@ -85,7 +85,6 @@ metadata:
   name: loki-write
   namespace: microservices
 spec:
-  serviceAccountName: microservices-sa
   replicas: 1
   selector:
     matchLabels:
@@ -95,6 +94,7 @@ spec:
       labels:
         app: loki-write
     spec:
+      serviceAccountName: microservices-sa
       containers:
       - name: loki
         image: grafana/loki:3.0.0

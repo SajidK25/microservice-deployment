@@ -6,7 +6,6 @@ metadata:
   labels:
     app: keycloak
 spec:
-  serviceAccountName: microservices-sa
   replicas: 1
   selector:
     matchLabels:
@@ -16,6 +15,7 @@ spec:
       labels:
         app: keycloak
     spec:
+      serviceAccountName: microservices-sa
       tolerations:
       - key: "node-role.kubernetes.io/control-plane"
         operator: "Exists"
