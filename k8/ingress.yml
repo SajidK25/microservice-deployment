@@ -4,38 +4,41 @@ metadata:
   name: microservices-ingress
   namespace: microservices
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
 spec:
   ingressClassName: nginx
   rules:
   - host: localhost
     http:
       paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: gateway-service
-            port:
-              number: 8080
-      - path: /keycloak
-        pathType: Prefix
+      # Specific app subpaths FIRST so they don't fall through to the catch-all
+      - path: /keycloak/?(.*)
+        pathType: ImplementationSpecific
         backend:
           service:
             name: keycloak
             port:
               number: 8080
-      - path: /grafana
-        pathType: Prefix
+      - path: /grafana/?(.*)
+        pathType: ImplementationSpecific
         backend:
           service:
             name: grafana
             port:
               number: 3000
-      - path: /zipkin
-        pathType: Prefix
+      - path: /zipkin/?(.*)
+        pathType: ImplementationSpecific
         backend:
           service:
             name: zipkin
             port:
               number: 9411
+      # Catch-all to the API gateway (keeps path)
+      - path: /?(.*)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: gateway-service
+            port:
+              number: 8080
